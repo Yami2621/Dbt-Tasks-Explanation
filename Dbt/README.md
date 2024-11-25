@@ -4,64 +4,115 @@ Questions response :
 
 ### What are each of the files for?
 
-| file | role |
-| ------ | ------ |
-| models | A directory containing three subfolders, each housing a SQL model file. These SQL files execute queries against Google BigQuery. |
-| schema.yml | A YAML file defining source declarations. It specifies the source tables, linking them to the appropriate GCP project and BigQuery dataset.  |
-| m0_report.sql | This SQL file executes a query in BigQuery, leveraging Jinja templating (e.g., {{ source('source.name', 'source.table.name') }}) to dynamically reference source tables as defined in schema.yml. For example, it resolves to a table like my-dev-239410.my_domain_workflow.transactions. The query consolidates all transaction data, including refunds, into a unified view.  |
-|  m1_report.sql | Similar to m0_report.sql, this query generates a union of detailed transactions and refunded transaction details. |
-| default | Acts like the other SQL files but copies the source table and assigns a custom name derived from the DBT_TGT_TABLE_NAME argument, rather than using a default name. |
-| dbt_command_loop.sh | A shell script that automates dbt run executions. It accepts two arguments:
 
-1. A YAML configuration file (e.g., table_config.yml or preprod_table_config.yml).
-2. The target environment (e.g., preprod, prod).
-   
-The script parses the YAML file to extract model folder names and relevant dbt arguments, then executes the dbt run command in the specified environment. |
-| dbt_project | This is the core project configuration file required to run dbt. It defines critical settings such as the project name, profile, and paths for models, data, snapshots, and seeds. In this use case, tables are materialized as BigQuery tables (though in other scenarios, materializations could be views or materialized views). |
-| table_config.yml |This file contains metadata about the pipeline, such as regions, dbt execution schedules (e.g., daily at 10 AM), SLAs, and details for each environment. It includes:
+| File | Role |
+|------|------|
+| **models/** | A directory containing three subfolders, each with a SQL model file that runs queries on Google BigQuery. |
+| **schema.yml** | A YAML file defining source declarations, specifying source tables from the GCP project and BigQuery dataset. |
+| **m0_report.sql** | Executes a query in BigQuery, using Jinja templates (e.g., `{{ source('source.name', 'source.table.name') }}`) to dynamically reference source tables defined in `schema.yml`. It consolidates all transactions and refunds into a single table. |
+| **m1_report.sql** | Similar to `m0_report.sql`, but generates a union of detailed transactions and refunded transaction details. |
+| **default.sql** | Similar to other SQL files, but copies the source table while assigning a custom name derived from the `DBT_TGT_TABLE_NAME` argument. |
+| **dbt_command_loop.sh** | A script that automates `dbt run` commands. Accepts two arguments: a YAML file (e.g., `table_config.yml` or `preprod_table_config.yml`) and the target environment (`preprod`, `prod`, etc.). It parses the YAML to extract dbt arguments and executes the `dbt run` command in the specified environment. |
+| **dbt_project.yml** | The core configuration file for running dbt. Defines project settings such as the project name, profile, and paths for models, data, snapshots, and seeds. Tables in this use case are materialized as BigQuery tables but could be views or materialized views in other cases. |
+| **manifest.yml** | Metadata file containing details about regions, dbt run schedules (e.g., daily at 10 AM), SLAs, environments, source/target GCP projects, service accounts, and credentials. It also specifies paths for scripts (e.g., `dbt_command_loop.sh`) and configuration files, as well as Slack channels for notifications about pipeline status and issues. |
+| **table_config.yml** | YAML configuration parsed by `dbt_command_loop.sh`. Includes model folder names (`m0_report`, `m1_report`, `default`), source/target GCP project details, and dataset/table info. These settings are used in `schema.yml` and SQL model queries. |
+| **preprod_table_config.yml** | Similar to `table_config.yml` but tailored for the `preprod` environment. |
 
--> Source and target GCP projects.
--> Service accounts and credentials.
--> Paths to scripts like dbt_command_loop.sh and YAML configuration files.
--> Notification settings, such as Slack channels, to ensure visibility of pipeline execution statuses and alerts. |
-| preprod_table_config.yml | Functions similarly to table_config.yml but is tailored for the preprod environment. |
-### How to run this project and what results we expect.
+## How to Run This Project  
 
+### Execution Modes  
 
-The presence of the manifest file indicates the manner of executing the "dbt_command_loop.sh" script. It containsthe paths to the script and the table config file, the environment to use as well as other information such as the schedule and src and target projects.
-The main way to run this file is to use manifest.yml file in way to execute the "dbt_command_loop.sh" script with two arguments : the first is the table_config path and the second one is the environement 
-###### Expemple
-```sh
-./path/to/dbt_command_loop.sh /path/to/table_config.yml preprod
-```
-This depends if we are running locally or in Google Cloud. If it is local execution it's just about running the script as mentionned in the exemple and if it's GCP managed several ways can be use such Airflow dags on Cloud Composer or compute engine with cloud scheduler.
+1. **Local Execution**  
+   - Run the `dbt_command_loop.sh` script directly with the required arguments.  
+     ```bash
+     ./dbt_command_loop.sh <table_config.yml_path> <environment>
+     ```  
+   - Replace `<environment>` with the target environment (`preprod`, `prod`, etc.).  
 
-The script should execute DBT commands for all specified models, creating tables in the target schema in BigQuery in specific environement ( dev-uk , preprod-ca or prod-ca ) . It should also handle errors, reporting how many commands failed if any did. 
-It will actually copy table from "GCP_source_project.my_domain_workflow" and "GCP_source_project.my_domain_appointment" using default model in single directory and "GCP_source_project.event" using m0_report and m1_report datasets to the "GCP_target_project.my_operatianal" dataset.
+2. **Google Cloud Execution**  
+   - Deploy the script using **Airflow DAGs** (via Cloud Composer) or **Cloud Scheduler** with Compute Engine.  
 
-### List some of this solution's design problems and compare to dbt projects best practices.
-##### Design Problems:
-###### Complexity of Configuration Management:
-With multiple configuration files (e.g., table_config.yml, preprod_table_config.yml), managing changes across environments can be error-prone and cumbersome.
-###### Separation of Logic:
-Running each model as a separate project may lead to duplicated logic and configurations
-###### Error Handling: 
-The error handling approach in the shell script may not provide detailed context for failures, making debugging more challenging.
+---
 
-##### Comparison to DBT Best Practices:
+### Data Pipeline Overview  
 
- DBT best practices recommend keeping models within a single project to facilitate better management and reduce configuration duplication. This approach also enhances collaboration and code sharing.
-The use of testing and documentation is emphasized in best practices, which seems to be underrepresented in this structure.
-Streamlining configurations into a more modular structure within a single DBT project is favored over separate projects.
+- The script copies tables from the following source datasets:  
+  - `GCP_source_project.my_domain_workflow`  
+  - `GCP_source_project.my_domain_appointment`  
+  - `GCP_source_project.event`  
+- Transformed data is stored in the target dataset:  
+  - `GCP_target_project.my_operational`  
+- Models (`m0_report`, `m1_report`, and `default`) process and transform the data for various use cases.  
 
-### This project runs every model as a separated dbt project.  
-Provide an alternative solution to put everything in one single dbt project that can handle all the environments(targets) and all models.
-You don't need to run it, just provide a new repo containing the new solution's code.  
-Provid your analysis and suggestions if there are many ways to achieve the same results.
+The pipeline ensures:  
+- Successful execution of dbt commands for all models in the specified environment.  
+- Error reporting to summarize failures and aid debugging.  
 
-Please see attached my code. I can optimize it using macros
-Here I used one single project. I configured the "profile.yml" file so that we can mention the target dataset and GCP project and I configured the "dbt_project.yml" file to handle environements and to exclude models in case of using preprod_ca enviroement(not all table are used in the ancient preprod_table_config.yml). 
-Finally I implimented the models folder with the well configured sources and the models with their yml files. 
+---
 
+## Design Challenges and Comparison to dbt Best Practices  
 
-Feel free to reach to, I will be glad to discuss my work
+### Design Challenges  
+
+1. **Configuration Management Complexity**  
+   - Multiple YAML configuration files (`table_config.yml`, `preprod_table_config.yml`) make managing changes across environments error-prone.  
+
+2. **Separation of Logic**  
+   - Running each model as a separate project duplicates logic and configuration, increasing maintenance overhead.  
+
+3. **Error Handling**  
+   - The shell script lacks robust error reporting, making it difficult to debug issues in complex pipelines.  
+
+---
+
+### Best Practices in dbt  
+
+1. **Unified Project Structure**  
+   - dbt recommends consolidating models within a single project to streamline workflows and reduce duplication.  
+
+2. **Testing and Documentation**  
+   - Incorporate tests for all models and detailed documentation in YAML files for better maintainability and data quality assurance.  
+
+3. **Modular Configurations**  
+   - Use macros and reusable configurations to simplify SQL logic and improve scalability.  
+
+---
+
+## Proposed Solution: Single dbt Project  
+
+### Key Improvements  
+
+1. **Unified Structure**  
+   - Consolidate all models into one dbt project with a structured directory for sources, models, and YAML files.  
+
+2. **Dynamic Environment Handling**  
+   - Configure `profiles.yml` for dynamic environment selection (e.g., `dev-uk`, `preprod-ca`).  
+   - Update `dbt_project.yml` to handle environment-specific model exclusions (e.g., exclude unnecessary tables in `preprod-ca`).  
+
+3. **Macros for Reusability**  
+   - Introduce macros to eliminate repetitive SQL logic and enhance readability.  
+
+4. **Enhanced Error Handling**  
+   - Implement detailed logging for dbt command execution to capture errors with context.  
+
+5. **Testing and Validation**  
+   - Add tests for all sources and models to ensure data integrity and compliance with business requirements.  
+
+---
+
+### Example Workflow in the Unified Project  
+
+1. Configure `profiles.yml`:  
+   - Define credentials and datasets for each environment.  
+
+2. Execute dbt commands:  
+   - Run transformations for all models:  
+     ```bash
+     dbt run --target <environment>
+     ```  
+
+3. Use macros and YAML configurations for modular and scalable workflows.  
+
+---
+
+Feel free to reach out for further discussions or clarifications regarding this solution. I look forward to collaborating to refine and optimize this project!  
